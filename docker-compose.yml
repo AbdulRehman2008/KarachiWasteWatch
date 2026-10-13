@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: karachi_wastewatch_ai
+    ports:
+      - "8000:8000"  # FastAPI REST API & Swagger docs
+    environment:
+      - DATABASE_URL=sqlite:///./karachi_wastewatch.db
+      - ENVIRONMENT=development
+    volumes:
+      - .:/app
+      - /app/venv
+    restart: unless-stopped
