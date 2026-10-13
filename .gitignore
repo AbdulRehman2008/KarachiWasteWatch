@@ -31,7 +31,10 @@ runs/
 # Data & Uploads
 sample_images/*
 !sample_images/.gitkeep
-uploaded_images/
+!sample_images/download_samples.py
+uploaded_images/*
+!uploaded_images/.gitkeep
+
 
 # Environment
 .env
