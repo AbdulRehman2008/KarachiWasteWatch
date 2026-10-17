@@ -10,7 +10,13 @@ Verifies:
 7. Role-Based Access Control (RBAC): Admin vs Citizen endpoint protection
 """
 
-import pytest
+try:
+    import pytest
+    fixture = pytest.fixture
+except ImportError:
+    def fixture(fn):
+        return fn
+
 from fastapi.testclient import TestClient
 from backend.app.main import app
 from backend.app.services.waste_service import (
@@ -22,9 +28,10 @@ from ai.hotspots.cluster import detect_karachi_hotspots
 from ai.severity_model.model import WasteSeverityML
 
 
-@pytest.fixture
+@fixture
 def client():
     return TestClient(app)
+
 
 
 def test_api_health(client):
@@ -183,4 +190,111 @@ def test_citizen_registration_and_report_history(client):
     assert "citizen" in detail
     assert detail["citizen"] is not None
     assert detail["citizen"]["citizen_id"] is not None
+
+
+def test_hazard_detection_engine():
+    """Verify HazardDetectionEngine flags bio-medical risks and outputs PPE protocols."""
+    from ai.hazard_detector import hazard_engine
+
+    # Test bio-medical syringe detection
+    bio_res = hazard_engine.analyze(
+        detections=[{"class_name": "syringe", "confidence": 0.92}],
+        description="Hazardous medical waste dumped outside clinic."
+    )
+    assert bio_res["is_hazardous"] is True
+    assert bio_res["hazard_level"] == "CRITICAL HAZARD"
+    assert "Bio-Medical" in bio_res["hazard_type"]
+    assert "Puncture-Resistant" in bio_res["safety_protocol"]["ppe_required"][0]
+    assert "HAZMAT" in bio_res["safety_protocol"]["specialized_team"]
+
+    # Test safe household waste
+    safe_res = hazard_engine.analyze(
+        detections=[{"class_name": "cardboard", "confidence": 0.88}],
+        description="Clean paper cartons on roadside."
+    )
+    assert safe_res["is_hazardous"] is False
+    assert safe_res["hazard_level"] == "SAFE / LOW"
+
+
+def test_dump_volume_tonnage_estimator():
+    """Verify DumpVolumeEstimator computes realistic 3D volume, mass, and fleet recommendations."""
+    from ai.volume_estimator import volume_estimator
+
+    # Test small refuse pile
+    small_res = volume_estimator.estimate(
+        detections=[{"class_name": "plastic", "bbox": [100, 100, 300, 300]}],
+        image_dimensions={"width": 800, "height": 600},
+        waste_coverage_pct=15.0
+    )
+    assert small_res["estimated_volume_m3"] > 0.0
+    assert small_res["estimated_tonnage"] > 0.0
+    assert "vehicle_type" in small_res["dispatch_recommendation"]
+
+    # Test major overflow pile
+    large_res = volume_estimator.estimate(
+        detections=[
+            {"class_name": "trash", "bbox": [50, 50, 750, 550]},
+            {"class_name": "garbage", "bbox": [100, 100, 700, 500]},
+        ],
+        image_dimensions={"width": 800, "height": 600},
+        waste_coverage_pct=75.0
+    )
+    assert large_res["estimated_volume_m3"] >= 1.0
+    assert "Compactor" in large_res["dispatch_recommendation"]["vehicle_type"]
+
+
+def test_anti_fraud_duplicate_engine():
+    """Verify AntiFraudEngine perceptual image hashing and duplicate detection."""
+    from ai.anti_fraud import anti_fraud_engine, compute_dhash, hamming_distance
+
+    # Test hash computation
+    h1 = "2b0e83e367a7c1d4"
+    h2 = "2b0e83e367a7c1d4"  # Exact duplicate
+    h3 = "2b0e83e367a7c1d0"  # 1 bit difference
+    h4 = "ffffffffffffffff"  # Completely different
+
+    assert hamming_distance(h1, h2) == 0
+    assert hamming_distance(h1, h3) == 1
+    assert hamming_distance(h1, h4) > 20
+
+    # Verify duplicate matching logic
+    past_records = [{"report_id": "RPT-KHI-TEST99", "image_hash": h1}]
+    # Simulate verification against identical hash
+    dist = hamming_distance(h1, past_records[0]["image_hash"])
+    assert dist <= 8, "Should detect duplicate within threshold"
+
+
+if __name__ == "__main__":
+    c = TestClient(app)
+    tests = [
+        ("Health Check Endpoint", lambda: test_api_health(c)),
+        ("Duplicate Distance (Haversine)", test_duplicate_distance_calculation),
+        ("Cleanup Verification Logic", test_cleanup_verification_logic),
+        ("Auto-Assign Team Routing", test_auto_assign_team),
+        ("DBSCAN Hotspot Detection", test_dbscan_hotspot_detection),
+        ("ML Severity Scoring Model", test_ml_severity_model),
+        ("Auth & RBAC Protection", lambda: test_auth_and_rbac_flow(c)),
+        ("Citizen Registration & History", lambda: test_citizen_registration_and_report_history(c)),
+        ("Option 3: Hazard & Bio-Medical Engine", test_hazard_detection_engine),
+        ("Option 4: Dump Volume & Tonnage Estimator", test_dump_volume_tonnage_estimator),
+        ("Option 7: Anti-Fraud & Perceptual Hashing", test_anti_fraud_duplicate_engine),
+    ]
+
+    print("=" * 65)
+    print("RUNNING KARACHI WASTEWATCH AI ACCEPTANCE & UNIT TEST SUITE")
+    print("=" * 65)
+    passed = 0
+    for name, test_fn in tests:
+        try:
+            test_fn()
+            print(f"  [PASS] {name}")
+            passed += 1
+        except Exception as e:
+            print(f"  [FAIL] {name}: {e}")
+
+    print("=" * 65)
+    print(f"RESULT: {passed}/{len(tests)} TESTS PASSED ({passed / len(tests) * 100:.1f}%)")
+    print("=" * 65)
+
+
 

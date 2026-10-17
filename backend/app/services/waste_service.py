@@ -60,11 +60,13 @@ def check_duplicate_report(
 
 DISTRICT_TEAMS = {
     "District South (Saddar, Clifton, DHA)": "SSWMB - District South Rapid Response Team",
+    "District East (Gulshan, Johar, PECHS)": "SSWMB - District East Sanitation Unit",
     "District East (Gulshan, Jamshed)": "SSWMB - District East Sanitation Unit",
     "District Central (Nazimabad, North Nazimabad)": "SSWMB - Central Municipal Action Fleet",
     "District Korangi": "SSWMB - Korangi Industrial & Residential Unit",
     "District Keamari": "SSWMB - Keamari Coastal & Harbor Cleanup Team",
     "District Malir": "SSWMB - Malir Rural & Urban Sanitation Cell",
+    "District West (Orangi, SITE)": "SSWMB - District West & Orangi Sanitation Unit",
 }
 
 

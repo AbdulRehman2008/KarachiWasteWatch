@@ -32,3 +32,30 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def run_migrations():
+    """Ensure database schema includes new AI columns safely."""
+    from sqlalchemy import inspect, text
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(engine)
+            if "reports" in inspector.get_table_names():
+                columns = [col["name"] for col in inspector.get_columns("reports")]
+                cols_to_add = [
+                    ("image_hash", "VARCHAR(64)"),
+                    ("fraud_status", "VARCHAR(50) DEFAULT 'Authentic'"),
+                    ("authenticity_score", "INTEGER DEFAULT 100"),
+                    ("hazard_level", "VARCHAR(50) DEFAULT 'SAFE / LOW'"),
+                    ("hazard_type", "VARCHAR(100)"),
+                    ("estimated_volume_m3", "FLOAT DEFAULT 0.0"),
+                    ("estimated_tonnage", "FLOAT DEFAULT 0.0"),
+                    ("recommended_vehicle", "VARCHAR(150)"),
+                ]
+                for col_name, col_def in cols_to_add:
+                    if col_name not in columns:
+                        conn.execute(text(f"ALTER TABLE reports ADD COLUMN {col_name} {col_def}"))
+                conn.commit()
+    except Exception as e:
+        print(f"Migration note: {e}")
+

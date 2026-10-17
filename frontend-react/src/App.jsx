@@ -62,7 +62,7 @@ export default function App() {
             <Route path="my-reports" element={<MyReports />} />
             <Route path="map" element={<WasteMap />} />
             <Route path="profile" element={<Profile />} />
-            <Route path="assistant" element={<CitizenChatbot />} />
+            <Route path="assistant" element={<Navigate to="/citizen/dashboard" replace />} />
           </Route>
 
           {/* Admin */}

@@ -2,25 +2,25 @@ import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { 
+  AppLogo,
   TrashIcon, 
   DashboardIcon, 
   ScannerIcon, 
   ReportIcon, 
   MapIcon, 
   UserIcon, 
-  LogoutIcon,
-  BotIcon
+  LogoutIcon
 } from '../components/Icons'
+import FloatingChatbot from '../components/FloatingChatbot'
 import './layout.css'
 
 const nav = [
-  { to: 'dashboard', icon: <DashboardIcon size={18} />, label: 'Dashboard' },
-  { to: 'assistant', icon: <BotIcon size={18} />, label: 'AI Guide (RAG Chat)' },
-  { to: 'scanner',   icon: <ScannerIcon size={18} />, label: 'AI Waste Scanner' },
-  { to: 'report',    icon: <ReportIcon size={18} />, label: 'Report Waste' },
-  { to: 'my-reports',icon: <ReportIcon size={18} />, label: 'My Reports' },
-  { to: 'map',       icon: <MapIcon size={18} />, label: 'Waste Map' },
-  { to: 'profile',   icon: <UserIcon size={18} />, label: 'Profile' },
+  { to: 'dashboard',  icon: <DashboardIcon size={17} />, label: 'Dashboard' },
+  { to: 'scanner',    icon: <ScannerIcon size={17} />,   label: 'AI Waste Scanner' },
+  { to: 'report',     icon: <ReportIcon size={17} />,    label: 'Report Waste' },
+  { to: 'my-reports', icon: <ReportIcon size={17} />,    label: 'My Reports' },
+  { to: 'map',        icon: <MapIcon size={17} />,       label: 'Waste Map' },
+  { to: 'profile',    icon: <UserIcon size={17} />,      label: 'Profile' },
 ]
 
 export default function CitizenLayout() {
@@ -33,70 +33,80 @@ export default function CitizenLayout() {
 
   return (
     <div className="layout">
-      {/* Top Mobile Bar */}
       <header className="mobile-header">
-        <button 
-          className="mobile-menu-btn" 
+        <button
+          className="mobile-menu-btn"
           onClick={() => setMobileOpen(!mobileOpen)}
           aria-label="Toggle navigation"
         >
-          {mobileOpen ? '✕' : '☰'}
+          {mobileOpen ? (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          ) : (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="3" y1="6"  x2="21" y2="6"  />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          )}
         </button>
-        <div className="mobile-header-brand">
-          <TrashIcon size={20} color="var(--teal)" />
-          <span className="logo-title">WasteWatch</span>
+        <div className="mobile-header-brand" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <AppLogo size={22} variant="teal" />
+          <span>WasteWatch</span>
         </div>
-        <div className="id-pill" style={{fontSize: '0.7rem'}}>{user?.citizen_id || 'Citizen'}</div>
+        <div className="id-pill" style={{ fontSize: '0.65rem' }}>{user?.citizen_id || 'Citizen'}</div>
       </header>
 
-      {/* Backdrop overlay for mobile */}
-      {mobileOpen && (
-        <div className="sidebar-backdrop" onClick={closeSidebar} />
-      )}
+      {mobileOpen && <div className="sidebar-backdrop" onClick={closeSidebar} />}
 
       <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
         <div className="sidebar-logo">
-          <div className="logo-icon-box" style={{background: 'rgba(13,148,136,0.2)', padding: 8, borderRadius: 8}}>
-            <TrashIcon size={24} color="var(--teal)" />
-          </div>
-          <div>
-            <div className="logo-title">WasteWatch</div>
-            <div className="logo-sub">Citizen Portal</div>
+          <AppLogo size={32} variant="teal" />
+          <div className="sidebar-logo-text">
+            <span className="logo-name">WasteWatch</span>
+            <span className="logo-portal">Citizen Portal</span>
           </div>
         </div>
 
         <div className="user-chip">
-          <div style={{background: 'rgba(255,255,255,0.1)', padding: 6, borderRadius: '50%', display: 'flex'}}>
-            <UserIcon size={18} color="#fff" />
+          <div className="user-avatar">
+            <UserIcon size={16} color="rgba(255,255,255,0.7)" />
           </div>
-          <div>
+          <div className="user-chip-info">
             <div className="user-name">{user?.full_name || 'Citizen'}</div>
-            <div className="id-pill">{user?.citizen_id || ''}</div>
+            <div className="user-chip-id">
+              <span className="id-pill" style={{ fontSize: '0.63rem' }}>{user?.citizen_id || ''}</span>
+            </div>
           </div>
         </div>
 
         <nav className="sidebar-nav">
           {nav.map(n => (
-            <NavLink 
-              key={n.to} 
-              to={n.to} 
+            <NavLink
+              key={n.to}
+              to={n.to}
               onClick={closeSidebar}
-              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+              className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
             >
-              <span style={{display: 'flex', alignItems: 'center'}}>{n.icon}</span>
+              <span className="nav-item-icon">{n.icon}</span>
               {n.label}
             </NavLink>
           ))}
         </nav>
 
-        <button className="logout-btn" onClick={handleLogout} style={{display: 'flex', alignItems: 'center', gap: 8}}>
-          <LogoutIcon size={16} /> Logout
+        <button className="logout-btn" onClick={handleLogout}>
+          <span className="nav-item-icon"><LogoutIcon size={16} /></span>
+          Sign Out
         </button>
       </aside>
 
       <main className="main-content">
         <Outlet />
       </main>
+
+      <FloatingChatbot />
     </div>
   )
 }

@@ -55,6 +55,8 @@ class DetectionItem(BaseModel):
 
 
 class AIDetectionOut(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     total_detections: int
     waste_coverage_pct: float
     detections: List[Dict[str, Any]]
@@ -69,6 +71,7 @@ class SeverityOut(BaseModel):
 
 class ReportBase(BaseModel):
     district: str
+    area: Optional[str] = None
     latitude: float
     longitude: float
     description: Optional[str] = None
@@ -80,6 +83,7 @@ class ReportCreate(ReportBase):
 
 class ReportEdit(BaseModel):
     district: Optional[str] = None
+    area: Optional[str] = None
     description: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -95,6 +99,14 @@ class ReportOut(ReportBase):
     status: str
     photo_path: str
     is_duplicate: bool
+    image_hash: Optional[str] = None
+    fraud_status: Optional[str] = "Authentic"
+    authenticity_score: Optional[int] = 100
+    hazard_level: Optional[str] = "SAFE / LOW"
+    hazard_type: Optional[str] = None
+    estimated_volume_m3: Optional[float] = 0.0
+    estimated_tonnage: Optional[float] = 0.0
+    recommended_vehicle: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

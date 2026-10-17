@@ -1,4 +1,4 @@
-path: C:/Users/user/OneDrive/Desktop/task/ai/datasets/karachi_waste
+path: c:/Users/GxS/Desktop/test/test/ai/datasets/karachi_waste
 train: train/images
 val: valid/images
 test: test/images

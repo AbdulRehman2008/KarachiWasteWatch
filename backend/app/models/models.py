@@ -39,10 +39,19 @@ class Report(Base):
     status = Column(String(50), default="Pending")  # Pending -> Verified -> In Progress -> Resolved, Rejected, Cancelled
     photo_path = Column(String(255), nullable=False)
     district = Column(String(100), index=True)  # District South, East, Central, etc.
+    area = Column(String(100), nullable=True, index=True)  # Specific Area / Neighborhood
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     is_duplicate = Column(Boolean, default=False)
     duplicate_of_id = Column(Integer, ForeignKey("reports.id"), nullable=True)
+    image_hash = Column(String(64), nullable=True, index=True)
+    fraud_status = Column(String(50), default="Authentic")
+    authenticity_score = Column(Integer, default=100)
+    hazard_level = Column(String(50), default="SAFE / LOW")
+    hazard_type = Column(String(100), nullable=True)
+    estimated_volume_m3 = Column(Float, default=0.0)
+    estimated_tonnage = Column(Float, default=0.0)
+    recommended_vehicle = Column(String(150), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

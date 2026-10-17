@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { adminLogin } from '../api/api'
 import { useAuth } from '../contexts/AuthContext'
-import { ShieldIcon, KeyIcon } from '../components/Icons'
+import { AppLogo, ShieldIcon, KeyIcon, AnalyticsIcon, UsersIcon } from '../components/Icons'
 import './auth.css'
 
 export default function AdminLogin() {
@@ -32,41 +32,100 @@ export default function AdminLogin() {
   }
 
   return (
-    <div className="auth-page auth-page-admin">
-      <div className="auth-card">
-        <div className="auth-logo" style={{display: 'flex', justifyContent: 'center', marginBottom: 16}}>
-          <div style={{background: 'rgba(99,102,241,0.15)', padding: 14, borderRadius: '50%'}}>
-            <ShieldIcon size={36} color="var(--indigo)" />
+    <div className="auth-page">
+      {/* Left Brand Panel */}
+      <div className="auth-left auth-left-admin">
+        <div className="auth-brand" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <AppLogo size={34} variant="indigo" />
+          <div>
+            <div className="auth-brand-name">WasteWatch Admin</div>
+            <span className="auth-brand-tag">Municipal Operations Portal</span>
           </div>
         </div>
-        <h2>Admin Portal</h2>
-        <p className="auth-sub">Municipal Administration Access</p>
-
-        {error && <div className="alert alert-error">{error}</div>}
-
-        <div className="alert alert-info" style={{marginBottom:16}}>
-          <strong>Demo:</strong> ADMIN-001 / Admin@Karachi2026
+        <h2 className="auth-left-title">
+          Municipal waste<br />management, <span>centralized.</span>
+        </h2>
+        <p className="auth-left-sub">
+          Comprehensive dashboard to review reports, dispatch teams,
+          track hotspots, and monitor citywide waste management operations.
+        </p>
+        <div className="auth-left-features">
+          {[
+            { icon: <ShieldIcon size={15} color="#818cf8" />, bg: 'rgba(99,102,241,0.15)', text: 'Review & verify citizen reports' },
+            { icon: <AnalyticsIcon size={15} color="#f59e0b" />, bg: 'rgba(245,158,11,0.15)', text: 'District-level analytics & trends' },
+            { icon: <UsersIcon size={15} color="#2dd4bf" />, bg: 'rgba(13,148,136,0.15)', text: 'User and team management' },
+          ].map(f => (
+            <div className="auth-left-feat" key={f.text}>
+              <div className="auth-left-feat-icon" style={{background: f.bg}}>{f.icon}</div>
+              {f.text}
+            </div>
+          ))}
         </div>
+      </div>
 
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label className="form-label">Admin ID or Email</label>
-            <input className="form-input" placeholder="e.g. ADMIN-001"
-              value={form.email_or_id} onChange={e => setForm({...form, email_or_id: e.target.value})} required />
+      {/* Right Form Panel */}
+      <div className="auth-right">
+        <div className="auth-form-box">
+          <div className="auth-header">
+            <div className="auth-logo-icon" style={{background: 'rgba(79,70,229,0.1)'}}>
+              <ShieldIcon size={24} color="var(--indigo)" />
+            </div>
+            <h1 className="auth-title">Admin Access</h1>
+            <p className="auth-subtitle">Municipal Administration Portal — restricted access</p>
           </div>
-          <div className="form-group">
-            <label className="form-label">Password</label>
-            <input className="form-input" type="password" placeholder="••••••••"
-              value={form.password} onChange={e => setForm({...form, password: e.target.value})} required />
-          </div>
-          <button className="btn btn-full btn-lg" style={{background:'#4f46e5',color:'#fff', display: 'flex', gap: 8, alignItems: 'center'}} disabled={loading}>
-            <ShieldIcon size={18} /> {loading ? 'Authenticating...' : 'Authenticate as Admin'}
-          </button>
-        </form>
 
-        <div className="auth-links">
-          <Link to="/login">← Citizen Login</Link>
-          <Link to="/">Home</Link>
+          <div className="alert alert-info" style={{marginBottom: 18}}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span><strong>Demo credentials:</strong> ADMIN-001 / Admin@Karachi2026</span>
+          </div>
+
+          {error && (
+            <div className="alert alert-error">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit}>
+            <div className="form-group">
+              <label className="form-label">Admin ID or Email</label>
+              <input
+                className="form-input admin"
+                placeholder="e.g. ADMIN-001"
+                value={form.email_or_id}
+                onChange={e => setForm({...form, email_or_id: e.target.value})}
+                required
+                autoComplete="username"
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Password</label>
+              <input
+                className="form-input admin"
+                type="password"
+                placeholder="Enter admin password"
+                value={form.password}
+                onChange={e => setForm({...form, password: e.target.value})}
+                required
+                autoComplete="current-password"
+              />
+            </div>
+            <button
+              className="btn btn-admin btn-full btn-lg"
+              disabled={loading}
+              style={{marginTop: 4}}
+            >
+              <ShieldIcon size={17} />
+              {loading ? 'Authenticating...' : 'Access Admin Portal'}
+            </button>
+          </form>
+
+          <div className="auth-form-divider" />
+
+          <div className="auth-footer-links auth-footer-link-admin">
+            <Link to="/login">← Citizen Login</Link>
+            <Link to="/">Home</Link>
+          </div>
         </div>
       </div>
     </div>

@@ -16,12 +16,14 @@ export default function UserManagement() {
   }
 
   const handleDelete = async (id, name) => {
-    if (!window.confirm(`Delete citizen "${name}"? This cannot be undone.`)) return
+    if (!window.confirm(`Delete citizen account "${name}"? This action cannot be undone.`)) return
     try {
       await deleteUser(id)
-      toast.success(`Citizen ${name} deleted`)
+      toast.success(`Citizen ${name} deleted successfully`)
       setUsers(users.filter(u => u.id !== id))
-    } catch { toast.error('Delete failed') }
+    } catch { 
+      toast.error('Failed to delete user') 
+    }
   }
 
   const filtered = users.filter(u =>
@@ -33,24 +35,41 @@ export default function UserManagement() {
   return (
     <div>
       <div className="page-header">
-        <h1 style={{display: 'flex', alignItems: 'center', gap: 10}}>
-          <UsersIcon size={28} color="var(--indigo)" /> User Management
+        <h1>
+          <UsersIcon size={24} color="var(--indigo)" /> Citizen Accounts Management
         </h1>
-        <p>{users.length} registered citizen(s)</p>
+        <p>{users.length} registered citizen accounts across Karachi</p>
       </div>
 
       <div className="search-row">
         <div style={{position: 'relative', display: 'flex', alignItems: 'center', width: '100%', maxWidth: 360}}>
-          <input className="form-input" placeholder="Search by name, Citizen ID, or email..."
-            value={search} onChange={e => setSearch(e.target.value)} style={{paddingLeft: 36}} />
+          <input 
+            className="form-input" 
+            placeholder="Search by name, Citizen ID, or email..."
+            value={search} 
+            onChange={e => setSearch(e.target.value)} 
+            style={{paddingLeft: 36}} 
+          />
           <div style={{position: 'absolute', left: 12, display: 'flex', pointerEvents: 'none'}}>
             <SearchIcon size={16} color="var(--gray-400)" />
           </div>
         </div>
-        <span style={{alignSelf:'center',fontSize:'.85rem',color:'var(--gray-400)'}}>{filtered.length} results</span>
+        <span style={{alignSelf:'center', fontSize:'.82rem', color:'var(--gray-400)'}}>
+          Showing {filtered.length} of {users.length} citizens
+        </span>
       </div>
 
-      {loading ? <div className="spinner" /> : (
+      {loading ? (
+        <div className="spinner" />
+      ) : filtered.length === 0 ? (
+        <div className="card">
+          <div className="empty-state">
+            <UsersIcon size={36} color="var(--gray-300)" />
+            <p style={{fontWeight: 600, color: 'var(--gray-600)'}}>No citizen accounts found</p>
+            <p style={{fontSize: '0.8rem', marginTop: 4}}>Try clearing or adjusting your search term.</p>
+          </div>
+        </div>
+      ) : (
         <div className="table-wrap">
           <table>
             <thead>
@@ -61,7 +80,7 @@ export default function UserManagement() {
                 <th>Phone</th>
                 <th>Complaints</th>
                 <th>Registered</th>
-                <th>Action</th>
+                <th style={{textAlign: 'right'}}>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -69,13 +88,18 @@ export default function UserManagement() {
                 <tr key={u.id}>
                   <td><span className="id-pill">{u.citizen_id}</span></td>
                   <td><strong>{u.full_name}</strong></td>
-                  <td>{u.email}</td>
-                  <td>{u.phone || '—'}</td>
-                  <td><span className="badge badge-pending">{u.complaint_count}</span></td>
-                  <td>{new Date(u.created_at).toLocaleDateString()}</td>
-                  <td>
-                    <button className="btn btn-danger btn-sm" onClick={() => handleDelete(u.id, u.full_name)} style={{display: 'inline-flex', gap: 6, alignItems: 'center'}}>
-                      <TrashIcon size={14} /> Delete
+                  <td style={{color: 'var(--gray-600)'}}>{u.email}</td>
+                  <td style={{color: 'var(--gray-600)'}}>{u.phone || '—'}</td>
+                  <td><span className="badge badge-verified">{u.complaint_count} filed</span></td>
+                  <td style={{color: 'var(--gray-500)', fontSize: '0.8rem'}}>{new Date(u.created_at).toLocaleDateString()}</td>
+                  <td style={{textAlign: 'right'}}>
+                    <button 
+                      className="btn btn-secondary btn-sm" 
+                      onClick={() => handleDelete(u.id, u.full_name)} 
+                      style={{color: 'var(--rose)', borderColor: 'var(--rose-light)'}}
+                      title="Delete account"
+                    >
+                      <TrashIcon size={13} color="var(--rose)" /> Delete
                     </button>
                   </td>
                 </tr>

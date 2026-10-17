@@ -7,13 +7,17 @@ import os
 import json
 import uuid
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment configuration (.env)
+load_dotenv()
 from typing import List, Optional
 from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from backend.app.database.database import engine, Base, get_db
+from backend.app.database.database import engine, Base, get_db, run_migrations
 from backend.app.models.models import (
     User, Report, AIDetection, SeverityScore, Assignment, VerificationResult, Hotspot,
     ReportHistory, Notification
@@ -32,13 +36,23 @@ from backend.app.services.waste_service import (
     check_duplicate_report, auto_assign_team, verify_cleanup_comparison
 )
 from ai.inference.detector import WasteDetector
+from ai.severity_model.model import WasteSeverityML
+from ai.waste_classification.classifier import WasteMaterialClassifier
+from ai.vision_qa.quality_checker import assess_image_quality
+from ai.forecasting.predictor import WasteVolumePredictor
+from ai.hotspots.cluster import detect_karachi_hotspots
+from ai.hazard_detector import hazard_engine
+from ai.volume_estimator import volume_estimator
+from ai.anti_fraud import anti_fraud_engine
 
-# Initialize Database tables
+# Initialize Database tables and schema migrations
 Base.metadata.create_all(bind=engine)
+run_migrations()
 
 # Seed initial admin and demo citizen
 with next(get_db()) as db:
     seed_default_accounts(db)
+
 
 app = FastAPI(
     title="Karachi WasteWatch AI API",
@@ -60,8 +74,11 @@ UPLOAD_DIR = Path("uploaded_images")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
-# Load YOLO detector instance with Auto-Ensemble
+# Load AI Engines
 detector = WasteDetector("ensemble")
+severity_ml = WasteSeverityML()
+waste_classifier = WasteMaterialClassifier()
+forecaster = WasteVolumePredictor()
 
 
 @app.get("/health", tags=["System"])
@@ -179,13 +196,22 @@ async def ask_citizen_assistant(
 
 
 @app.post("/reports/scan", tags=["Reports"])
+@app.post("/ai/scan", tags=["AI"])
 async def scan_image_only(
     image: UploadFile = File(...),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    Run AI detection on an uploaded image without creating a report.
-    Returns detections + base64-encoded annotated image for React frontend.
+    Run comprehensive AI detection on an uploaded image without creating a report.
+    Returns:
+    - YOLO waste detections + annotated image
+    - CV Image quality inspection (blurriness, exposure)
+    - GradientBoosting ML severity prediction with class probabilities
+    - Waste stream classification, recyclability %, hazard level & carbon offset
+    - Bio-medical & toxic hazard AI assessment (Option 3)
+    - Volumetric & tonnage estimation with vehicle dispatch recommendation (Option 4)
+    - Anti-fraud perceptual image hashing & authenticity check (Option 7)
     """
     import base64
     contents = await image.read()
@@ -193,7 +219,44 @@ async def scan_image_only(
     with open(tmp_path, "wb") as f:
         f.write(contents)
 
+    # 1. Computer Vision Image Quality Inspection
+    quality = assess_image_quality(str(tmp_path))
+
+    # 2. YOLO Detection
     results = detector.detect(str(tmp_path))
+
+    # 3. Machine Learning Severity Classification
+    det_list = results.get("detections", [])
+    max_area = max([d.get("area_ratio", 0.0) for d in det_list] or [0.0])
+    type_cnt = len(set(d.get("class_name", "") for d in det_list)) or 1
+    ml_sev = severity_ml.predict(
+        total_detections=results["total_detections"],
+        waste_coverage_pct=results["waste_coverage_pct"],
+        avg_confidence=results.get("confidence", 0.75),
+        max_bbox_area_ratio=max_area,
+        nearby_past_reports=2,
+        waste_type_count=type_cnt,
+    )
+
+    # 4. Material Categorization & Recyclability Analysis
+    stream_analysis = waste_classifier.analyze_stream(det_list)
+
+    # 5. Option 3: Hazardous & Bio-Medical Waste AI Detection
+    hazard_analysis = hazard_engine.analyze(det_list, image_path=str(tmp_path))
+
+    # 6. Option 4: Dump Volume & Tonnage Estimation AI
+    volume_analysis = volume_estimator.estimate(
+        det_list,
+        results.get("image_dimensions"),
+        results["waste_coverage_pct"]
+    )
+
+    # 7. Option 7: Anti-Fraud Perceptual Duplicate & Authenticity Inspection
+    existing_hashes = [
+        {"report_id": r.report_id, "image_hash": r.image_hash}
+        for r in db.query(Report).filter(Report.image_hash.isnot(None)).all()
+    ]
+    fraud_analysis = anti_fraud_engine.verify_authenticity(str(tmp_path), existing_hashes)
 
     # Encode annotated image as base64 for JSON response
     annotated_bgr = results.get("annotated_image")
@@ -207,19 +270,26 @@ async def scan_image_only(
 
     return {
         "total_detections": results["total_detections"],
+        "has_waste": results.get("has_waste", False),
         "detections": results["detections"],
         "waste_coverage_pct": results["waste_coverage_pct"],
         "waste_type": results.get("waste_type", "Unknown"),
         "confidence": results.get("confidence", 0.0),
         "annotated_image_b64": b64,
         "scan_note": results.get("scan_note", ""),
+        "image_quality": quality,
+        "ml_severity": ml_sev,
+        "waste_classification": stream_analysis,
+        "hazard_analysis": hazard_analysis,
+        "volume_estimation": volume_analysis,
+        "anti_fraud": fraud_analysis,
     }
 
 
 @app.post("/reports", response_model=ReportOut, tags=["Reports"])
-
 async def create_report(
     district: str = Form(...),
+    area: Optional[str] = Form(None),
     latitude: float = Form(...),
     longitude: float = Form(...),
     description: Optional[str] = Form(None),
@@ -229,7 +299,9 @@ async def create_report(
 ):
     """
     Submit a civic waste report. Links to authenticated citizen account.
-    Runs YOLO detection, smart severity calculation, duplicate check, and municipal routing.
+    Runs AI detection FIRST — strictly blocks report submission if no street garbage is detected.
+    Runs GradientBoosting ML severity prediction, anti-fraud duplicate detection,
+    volume/tonnage estimation, bio-medical hazard detection, and municipal routing.
     Increments citizen complaint count and logs initial report history.
     """
     file_ext = Path(image.filename).suffix or ".jpg"
@@ -240,8 +312,44 @@ async def create_report(
     with open(saved_filepath, "wb") as f:
         f.write(contents)
 
-    # Proximity duplicate check
+    # 1. Run AI Detection & Strict Waste Presence Check
+    detection_res = detector.detect(str(saved_filepath))
+    if detection_res.get("total_detections", 0) == 0 or not detection_res.get("has_waste", False):
+        saved_filepath.unlink(missing_ok=True)
+        note = detection_res.get("scan_note", "No street garbage or litter detected.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Waste Report Blocked: {note} To maintain municipal reporting integrity, photos must contain visible street garbage, debris, or trash heaps.",
+        )
+
+    # 2. Option 7: Anti-Fraud Perceptual Image Fingerprinting & Tamper Inspection
+    existing_hashes = [
+        {"report_id": r.report_id, "image_hash": r.image_hash}
+        for r in db.query(Report).filter(Report.image_hash.isnot(None)).all()
+    ]
+    fraud_res = anti_fraud_engine.verify_authenticity(
+        str(saved_filepath), existing_hashes, latitude, longitude
+    )
+
+    # Proximity duplicate check + Perceptual Duplicate Check
     is_dup, dup_parent_id = check_duplicate_report(db, latitude, longitude)
+    if fraud_res.get("is_visual_duplicate"):
+        is_dup = True
+        matched_rep = db.query(Report).filter(Report.report_id == fraud_res.get("duplicate_of_report_id")).first()
+        if matched_rep:
+            dup_parent_id = matched_rep.id
+
+    # 3. Option 3: Bio-Medical & Toxic Hazard AI Detection
+    hazard_res = hazard_engine.analyze(
+        detection_res.get("detections", []), description, str(saved_filepath)
+    )
+
+    # 4. Option 4: Dump Volume & Tonnage Estimation AI
+    volume_res = volume_estimator.estimate(
+        detection_res.get("detections", []),
+        detection_res.get("image_dimensions"),
+        detection_res["waste_coverage_pct"]
+    )
 
     report_id_str = f"RPT-KHI-{uuid.uuid4().hex[:6].upper()}"
     new_report = Report(
@@ -249,12 +357,21 @@ async def create_report(
         report_code=report_id_str,
         citizen_id=current_user.id if current_user else None,
         district=district,
+        area=area,
         latitude=latitude,
         longitude=longitude,
         description=description,
         photo_path=str(saved_filepath),
         is_duplicate=is_dup,
         duplicate_of_id=dup_parent_id,
+        image_hash=fraud_res["image_hash"],
+        fraud_status=fraud_res["status"],
+        authenticity_score=fraud_res["authenticity_score"],
+        hazard_level=hazard_res["hazard_level"],
+        hazard_type=hazard_res["hazard_type"],
+        estimated_volume_m3=volume_res["estimated_volume_m3"],
+        estimated_tonnage=volume_res["estimated_tonnage"],
+        recommended_vehicle=volume_res["dispatch_recommendation"]["vehicle_type"],
         status="Duplicate" if is_dup else "Pending",
     )
     db.add(new_report)
@@ -266,50 +383,86 @@ async def create_report(
     db.commit()
     db.refresh(new_report)
 
-    # Create Initial History
+    # Create Initial History with rich AI Diagnostics summary
+    diag_summary = (
+        f" [AI Analysis: Volume {volume_res['estimated_volume_m3']} m³ (~{volume_res['estimated_tonnage']} MT) | "
+        f"Vehicle: {volume_res['dispatch_recommendation']['vehicle_type']} | "
+        f"Hazard: {hazard_res['hazard_level']} | Authenticity: {fraud_res['authenticity_score']}%]"
+    )
     init_history = ReportHistory(
         report_id=new_report.id,
         from_status=None,
         to_status=new_report.status,
         changed_by=current_user.full_name if current_user else "Citizen",
-        notes="Citizen submitted waste complaint with image and GPS coordinates.",
+        notes=f"Citizen submitted verified waste report in {district}{f' ({area})' if area else ''} with image and GPS.{diag_summary}",
     )
     db.add(init_history)
 
-    # Run AI Detection
-    detection_res = detector.detect(str(saved_filepath))
-    severity_res = detector.calculate_initial_severity(detection_res)
+    # 5. Run Machine Learning Severity Classifier
+    det_list = detection_res.get("detections", [])
+    max_area = max([d.get("area_ratio", 0.0) for d in det_list] or [0.0])
+    type_cnt = len(set(d.get("class_name", "") for d in det_list)) or 1
+    nearby_cnt = db.query(Report).filter(Report.district == district).count()
+
+    ml_sev = severity_ml.predict(
+        total_detections=detection_res["total_detections"],
+        waste_coverage_pct=detection_res["waste_coverage_pct"],
+        avg_confidence=detection_res.get("confidence", 0.75),
+        max_bbox_area_ratio=max_area,
+        nearby_past_reports=nearby_cnt,
+        waste_type_count=type_cnt,
+    )
+
+    # If critical hazard detected, escalate severity level to Critical
+    final_sev_level = "Critical" if hazard_res["hazard_level"] == "CRITICAL HAZARD" else ml_sev["predicted_severity"]
+    final_sev_score = 0.95 if hazard_res["hazard_level"] == "CRITICAL HAZARD" else ml_sev["severity_score"]
+    final_sev_reason = (
+        f"CRITICAL HAZARD: {hazard_res['priority_action']}"
+        if hazard_res["hazard_level"] == "CRITICAL HAZARD"
+        else ml_sev["explanation"]
+    )
 
     ai_record = AIDetection(
         report_id=new_report.id,
         total_detections=detection_res["total_detections"],
         waste_coverage_pct=detection_res["waste_coverage_pct"],
         raw_detections_json=json.dumps(detection_res["detections"]),
-        model_version="auto_ensemble",
+        model_version="yolo11n_ensemble_v2",
     )
     db.add(ai_record)
 
     sev_record = SeverityScore(
         report_id=new_report.id,
-        level=severity_res["level"],
-        score=severity_res["score"],
-        reason=severity_res["reason"],
+        level=final_sev_level,
+        score=final_sev_score,
+        reason=final_sev_reason,
     )
     db.add(sev_record)
 
     # Route if not duplicate
     if not is_dup:
-        team_name = auto_assign_team(district)
+        if hazard_res["is_hazardous"] and hazard_res["hazard_level"] == "CRITICAL HAZARD":
+            team_name = hazard_res["safety_protocol"]["specialized_team"]
+            worker_notes = f"EMERGENCY HAZMAT DEPLOYMENT: {hazard_res['priority_action']}. PPE Required: {', '.join(hazard_res['safety_protocol']['ppe_required'])}."
+        else:
+            team_name = auto_assign_team(district)
+            worker_notes = (
+                f"Auto-routed to {district}. Volume: {volume_res['estimated_volume_m3']} m³ (~{volume_res['estimated_tonnage']} MT). "
+                f"Recommended Vehicle: {volume_res['dispatch_recommendation']['vehicle_type']}. "
+                f"ML Severity: {final_sev_level}."
+            )
+
         assignment_record = Assignment(
             report_id=new_report.id,
             assigned_team=team_name,
-            worker_notes=f"Auto-routed to {district} municipal unit.",
+            worker_notes=worker_notes,
         )
         db.add(assignment_record)
 
     db.commit()
     db.refresh(new_report)
     return new_report
+
 
 
 @app.get("/reports/my", response_model=List[ReportOut], tags=["Citizen Reports"])
@@ -319,6 +472,61 @@ def list_my_reports(
 ):
     """Citizen: List all reports submitted by the logged-in citizen."""
     return db.query(Report).filter(Report.citizen_id == current_user.id).order_by(Report.created_at.desc()).all()
+
+
+@app.get("/reports/my/map-summary", tags=["Citizen Reports"])
+def get_citizen_map_summary(
+    current_user: User = Depends(require_citizen),
+    db: Session = Depends(get_db),
+):
+    """
+    Citizen: Get map-focused summary of own reports.
+    Returns all own reports with coordinates, plus computed highest-activity district
+    for map highlighting. This is the ONLY map data a citizen should see.
+    """
+    my_reports = (
+        db.query(Report)
+        .filter(Report.citizen_id == current_user.id)
+        .order_by(Report.created_at.desc())
+        .all()
+    )
+
+    # Compute the citizen's highest-activity district
+    district_counts = {}
+    for r in my_reports:
+        if r.district:
+            district_counts[r.district] = district_counts.get(r.district, 0) + 1
+
+    hotspot_district = None
+    hotspot_center = None
+    hotspot_report_count = 0
+
+    if district_counts:
+        hotspot_district = max(district_counts, key=district_counts.get)
+        hotspot_report_count = district_counts[hotspot_district]
+
+        # Calculate centroid of reports in the hotspot district
+        hotspot_reports = [r for r in my_reports if r.district == hotspot_district and r.latitude and r.longitude]
+        if hotspot_reports:
+            avg_lat = sum(r.latitude for r in hotspot_reports) / len(hotspot_reports)
+            avg_lng = sum(r.longitude for r in hotspot_reports) / len(hotspot_reports)
+            hotspot_center = {"lat": round(avg_lat, 6), "lng": round(avg_lng, 6)}
+
+    # Status breakdown
+    status_counts = {}
+    for r in my_reports:
+        status_counts[r.status] = status_counts.get(r.status, 0) + 1
+
+    return {
+        "total_reports": len(my_reports),
+        "reports": my_reports,
+        "status_breakdown": status_counts,
+        "hotspot": {
+            "district": hotspot_district,
+            "report_count": hotspot_report_count,
+            "center": hotspot_center,
+        } if hotspot_district else None,
+    }
 
 
 @app.put("/reports/{report_id}", response_model=ReportOut, tags=["Citizen Reports"])
@@ -400,15 +608,16 @@ def cancel_pending_report(
 # =============================================================================
 # ADMIN OPERATIONS & ROLE-PROTECTED ENDPOINTS
 # =============================================================================
-@app.get("/reports", response_model=List[ReportOut], tags=["Reports"])
-def list_reports(
+@app.get("/reports", response_model=List[ReportOut], tags=["Admin Operations"])
+def list_all_reports(
     district: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     limit: int = 100,
+    admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """List reports with search and filter options."""
+    """ADMIN ONLY: List all reports across the system with search and filter options."""
     query = db.query(Report)
     if district and district != "All Districts":
         query = query.filter(Report.district.contains(district))
@@ -426,11 +635,25 @@ def list_reports(
 
 
 @app.get("/reports/{report_id}", tags=["Reports"])
-def get_report_detail(report_id: int, db: Session = Depends(get_db)):
-    """Retrieve full details of a specific report including citizen info, AI detections, and history."""
+def get_report_detail(
+    report_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Retrieve full details of a specific report.
+    Citizens can only access their own reports. Admins can access any report.
+    """
     rep = db.query(Report).filter(Report.id == report_id).first()
     if not rep:
         raise HTTPException(status_code=404, detail="Report not found")
+
+    # Access control: citizens can only view their own reports
+    if current_user.role != "admin" and rep.citizen_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to view this report.",
+        )
 
     return {
         "id": rep.id,
@@ -449,6 +672,14 @@ def get_report_detail(report_id: int, db: Session = Depends(get_db)):
         "longitude": rep.longitude,
         "status": rep.status,
         "is_duplicate": rep.is_duplicate,
+        "image_hash": rep.image_hash,
+        "fraud_status": rep.fraud_status or "Authentic",
+        "authenticity_score": rep.authenticity_score if rep.authenticity_score is not None else 100,
+        "hazard_level": rep.hazard_level or "SAFE / LOW",
+        "hazard_type": rep.hazard_type,
+        "estimated_volume_m3": rep.estimated_volume_m3 or 0.0,
+        "estimated_tonnage": rep.estimated_tonnage or 0.0,
+        "recommended_vehicle": rep.recommended_vehicle,
         "description": rep.description,
         "photo_path": rep.photo_path,
         "created_at": rep.created_at,
@@ -717,36 +948,99 @@ def delete_user(
 # =============================================================================
 # ANALYTICS & HOTSPOTS (PUBLIC / ADMIN)
 # =============================================================================
-@app.get("/analytics/summary", response_model=AnalyticsSummary, tags=["Analytics"])
+@app.get("/admin/analytics", tags=["Admin Analytics"])
+@app.get("/analytics/summary", tags=["Analytics"])
 def get_analytics_summary(db: Session = Depends(get_db)):
-    """Summary metrics of the civic waste system."""
-    total = db.query(Report).count()
-    pending = db.query(Report).filter(Report.status == "Pending").count()
-    verified = db.query(Report).filter(Report.status == "Verified").count()
-    assigned = db.query(Report).filter(Report.status.in_(["Assigned", "In Progress"])).count()
-    resolved = db.query(Report).filter(Report.status == "Resolved").count()
-    rejected = db.query(Report).filter(Report.status == "Rejected").count()
-    high_sev = db.query(SeverityScore).filter(SeverityScore.level == "High").count()
+    """
+    Comprehensive civic analytics with Machine Learning forecast and fleet allocation.
+    Returns real database breakdowns and predictive ML insights.
+    """
+    all_reports = db.query(Report).all()
+    total = len(all_reports)
 
-    return AnalyticsSummary(
-        total_reports=total,
-        pending_reports=pending,
-        verified_reports=verified,
-        assigned_reports=assigned,
-        resolved_reports=resolved,
-        rejected_reports=rejected,
-        high_severity_count=high_sev,
-        avg_resolution_hours=12.5,
+    # Breakdowns
+    by_status = {}
+    by_district = {}
+    district_counts = {}
+
+    for r in all_reports:
+        st = r.status or "Pending"
+        by_status[st] = by_status.get(st, 0) + 1
+        dist = r.district or "Unknown"
+        by_district[dist] = by_district.get(dist, 0) + 1
+        district_counts[dist] = district_counts.get(dist, 0) + 1
+
+    # Severity breakdown
+    all_severities = db.query(SeverityScore).all()
+    by_severity = {}
+    for s in all_severities:
+        lvl = s.level or "Medium"
+        by_severity[lvl] = by_severity.get(lvl, 0) + 1
+
+    resolved = by_status.get("Resolved", 0)
+    resolution_rate = round((resolved / total * 100.0), 1) if total > 0 else 0.0
+
+    # Calculate average resolution time in days
+    resolved_reports = [r for r in all_reports if r.status == "Resolved" and r.updated_at and r.created_at]
+    if resolved_reports:
+        total_days = sum((r.updated_at - r.created_at).total_seconds() / 86400.0 for r in resolved_reports)
+        avg_days = round(total_days / len(resolved_reports), 1)
+    else:
+        avg_days = 1.2
+
+    # Run Machine Learning 7-Day Forecast
+    forecast_result = forecaster.forecast_next_week()
+
+    # Run Fleet Allocation Optimization
+    fleet_allocations = forecaster.recommend_fleet_allocation(district_counts)
+
+    return {
+        "total_reports": total,
+        "resolved_count": resolved,
+        "resolution_rate": resolution_rate,
+        "avg_resolution_days": avg_days,
+        "by_status": by_status,
+        "by_district": by_district,
+        "by_severity": by_severity,
+        "ml_forecast": forecast_result,
+        "fleet_allocation": fleet_allocations,
+    }
+
+
+@app.get("/admin/hotspots", tags=["Admin Hotspots"])
+@app.get("/analytics/hotspots", tags=["Analytics"])
+def get_karachi_hotspots(
+    epsilon_meters: float = Query(350.0, description="DBSCAN clustering radius in meters"),
+    min_reports: int = Query(3, description="Minimum reports to form a persistent hotspot"),
+    db: Session = Depends(get_db),
+):
+    """
+    Dynamic geospatial hotspot detection using DBSCAN Machine Learning with Haversine metric.
+    Clusters active civic reports into recurring problem hotspots across Karachi districts.
+    """
+    reports = (
+        db.query(Report)
+        .filter(Report.latitude.isnot(None), Report.longitude.isnot(None))
+        .all()
     )
 
-
-@app.get("/analytics/hotspots", tags=["Analytics"])
-def get_karachi_hotspots():
-    """Returns identified geospatial hotspots across Karachi districts."""
-    return [
-        {"district": "District South", "area": "Empress Market, Saddar", "lat": 24.8569, "lng": 67.0149, "report_count": 14, "risk": "High"},
-        {"district": "District East", "area": "Nipa Chowrangi, Gulshan", "lat": 24.9180, "lng": 67.0971, "report_count": 9, "risk": "Medium"},
-        {"district": "District Central", "area": "Liaquatabad Supermarket", "lat": 24.9012, "lng": 67.0384, "report_count": 18, "risk": "High"},
-        {"district": "District Korangi", "area": "Korangi Crossing", "lat": 24.8211, "lng": 67.1245, "report_count": 12, "risk": "High"},
-        {"district": "District Malir", "area": "Malir 15 Flyover", "lat": 24.8722, "lng": 67.1983, "report_count": 7, "risk": "Medium"},
+    report_dicts = [
+        {
+            "id": r.id,
+            "latitude": float(r.latitude),
+            "longitude": float(r.longitude),
+            "district": r.district,
+            "status": r.status,
+            "report_id": r.report_id,
+        }
+        for r in reports
     ]
+
+    hotspots_result = detect_karachi_hotspots(
+        report_dicts,
+        epsilon_meters=epsilon_meters,
+        min_reports=min_reports,
+    )
+
+    return hotspots_result
+
